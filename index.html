@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#253321">
+  <meta name="description" content="See where a quiet path takes you.">
+  <title>Follow the Open Sky</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #20281d;
+      --paper: #f1f0e7;
+      --moss: #536348;
+      --serif: "Instrument Serif", Georgia, serif;
+      --sans: "DM Sans", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      background: var(--paper);
+      scrollbar-width: none;
+    }
+
+    html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .walk { position: relative; height: 600svh; }
+
+    .scene {
+      position: sticky;
+      top: 0;
+      height: 100svh;
+      min-height: 540px;
+      overflow: hidden;
+      isolation: isolate;
+      background: #b9c6c2;
+    }
+
+    .scene canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .scene::after {
+      position: absolute;
+      z-index: 0;
+      inset: 0;
+      content: "";
+      background: linear-gradient(180deg, rgb(19 28 20 / 20%) 0%, transparent 19%, transparent 58%, rgb(15 23 15 / 38%) 100%);
+      pointer-events: none;
+    }
+
+    .story-copy {
+      position: absolute;
+      z-index: 1;
+      top: 20%;
+      left: 8%;
+      width: min(84%, 540px);
+      color: var(--ink);
+    }
+
+    h1 {
+      max-width: 9ch;
+      margin: 0;
+      font-family: var(--serif);
+      font-size: clamp(54px, 15vw, 86px);
+      font-weight: 400;
+      line-height: .88;
+    }
+
+    h1 em { font-weight: 400; }
+
+    .story-note {
+      max-width: 29ch;
+      margin: 18px 0 0;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .bottomline {
+      position: absolute;
+      z-index: 1;
+      right: 22px;
+      bottom: max(24px, env(safe-area-inset-bottom));
+      left: 22px;
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      color: white;
+      text-shadow: 0 1px 12px rgb(0 0 0 / 35%);
+    }
+
+    .credit { margin: 0; font-size: 11px; font-weight: 700; }
+    .credit-name {
+      color: #8bd8f5;
+      font: inherit;
+    }
+
+    @media (min-width: 760px) {
+      .story-copy { top: 22%; left: 11%; }
+      h1 { font-size: clamp(82px, 9vw, 132px); }
+      .story-note { font-size: 15px; }
+      .bottomline { right: 40px; bottom: max(30px, env(safe-area-inset-bottom)); left: 40px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="walk" id="walk" aria-label="A walk through the hills">
+      <div class="scene">
+        <canvas id="landscape" role="img" aria-label="A person walking through a green hillside"></canvas>
+        <div class="story-copy" id="story-copy">
+          <h1>Follow the<br><em>open sky.</em></h1>
+          <p class="story-note">See where a quiet path takes you.</p>
+        </div>
+        <div class="bottomline">
+          <p class="credit">made by <span class="credit-name" id="credit-name">Vedant</span></p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    (() => {
+      const totalFrames = 300;
+      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const walk = document.querySelector("#walk");
+      const canvas = document.querySelector("#landscape");
+      const context = canvas.getContext("2d", { alpha: false });
+      const scene = document.querySelector(".scene");
+      const frameBlobs = new Array(totalFrames);
+      const blobPromises = new Map();
+      const decodedFrames = new Map();
+      const decodingFrames = new Set();
+      const decodeQueue = new Set();
+      const maxDecodedFrames = 6;
+      const maxConcurrentDecodes = 2;
+      let activeDecodes = 0;
+      let sourceWidth = 0;
+      let sourceHeight = 0;
+      let canvasVersion = 0;
+      let preloadingStarted = false;
+      let targetFrame = 0;
+      let paintedFrame = -1;
+      let direction = 1;
+      let lastScrollY = window.scrollY;
+      let scrollQueued = false;
+      let resizeQueued = false;
+
+      if (document.fullscreenEnabled && document.documentElement.requestFullscreen) {
+        scene.addEventListener("click", () => {
+          if (document.fullscreenElement) return;
+          document.documentElement.requestFullscreen().catch(() => {});
+        });
+      }
+
+      function frameUrl(index) {
+        return `ezgif-614ba16d5362531c-jpg/ezgif-frame-${String(index + 1).padStart(3, "0")}.jpg`;
+      }
+
+      function resizeCanvas() {
+        const scale = Math.min(window.devicePixelRatio || 1, 1.5);
+        const width = Math.round(canvas.clientWidth * scale);
+        const height = Math.round(canvas.clientHeight * scale);
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
+          canvasVersion += 1;
+          paintedFrame = -1;
+          decodedFrames.forEach((bitmap) => bitmap.close());
+          decodedFrames.clear();
+        }
+      }
+
+      function draw(bitmap, index) {
+        context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        paintedFrame = index;
+      }
+
+      function getFrameBlob(index) {
+        if (frameBlobs[index]) return Promise.resolve(frameBlobs[index]);
+        if (blobPromises.has(index)) return blobPromises.get(index);
+
+        const request = fetch(frameUrl(index), { cache: "force-cache" })
+          .then((response) => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.blob();
+          })
+          .then((blob) => {
+            frameBlobs[index] = blob;
+            return blob;
+          })
+          .finally(() => blobPromises.delete(index));
+        blobPromises.set(index, request);
+        return request;
+      }
+
+      function cropRect(width, height) {
+        const canvasAspect = canvas.width / canvas.height;
+        const imageAspect = width / height;
+        if (imageAspect > canvasAspect) {
+          const cropWidth = height * canvasAspect;
+          return { x: (width - cropWidth) / 2, y: 0, width: cropWidth, height };
+        }
+        const cropHeight = width / canvasAspect;
+        return { x: 0, y: (height - cropHeight) / 2, width, height: cropHeight };
+      }
+
+      async function decodeFrame(index, version) {
+        const blob = await getFrameBlob(index);
+        let bitmap;
+
+        if (!sourceWidth) {
+          const original = await createImageBitmap(blob);
+          sourceWidth = original.width;
+          sourceHeight = original.height;
+          const crop = cropRect(original.width, original.height);
+          bitmap = await createImageBitmap(original, crop.x, crop.y, crop.width, crop.height, {
+            resizeWidth: canvas.width,
+            resizeHeight: canvas.height,
+            resizeQuality: "high"
+          });
+          original.close();
+        } else {
+          const crop = cropRect(sourceWidth, sourceHeight);
+          bitmap = await createImageBitmap(blob, crop.x, crop.y, crop.width, crop.height, {
+            resizeWidth: canvas.width,
+            resizeHeight: canvas.height,
+            resizeQuality: "high"
+          });
+        }
+
+        if (version !== canvasVersion) {
+          bitmap.close();
+          return;
+        }
+
+        decodedFrames.set(index, bitmap);
+        while (decodedFrames.size > maxDecodedFrames) {
+          const farthestIndex = [...decodedFrames.keys()]
+            .filter((frame) => frame !== targetFrame)
+            .sort((a, b) => Math.abs(b - targetFrame) - Math.abs(a - targetFrame))[0];
+          if (farthestIndex === undefined) break;
+          decodedFrames.get(farthestIndex).close();
+          decodedFrames.delete(farthestIndex);
+        }
+
+        if (index === targetFrame && paintedFrame !== index) draw(bitmap, index);
+        if (index === 0 && !reducedMotion && !preloadingStarted) {
+          preloadingStarted = true;
+          preloadFrames();
+        }
+      }
+
+      function pumpDecodeQueue() {
+        while (activeDecodes < maxConcurrentDecodes && decodeQueue.size > 0) {
+          const index = decodeQueue.values().next().value;
+          decodeQueue.delete(index);
+          if (decodedFrames.has(index) || decodingFrames.has(index)) continue;
+
+          const version = canvasVersion;
+          activeDecodes += 1;
+          decodingFrames.add(index);
+          decodeFrame(index, version)
+            .catch((error) => console.error(`Unable to load animation frame ${index + 1}.`, error))
+            .finally(() => {
+              activeDecodes -= 1;
+              decodingFrames.delete(index);
+              queueFrameWindow();
+              pumpDecodeQueue();
+            });
+        }
+      }
+
+      function queueFrameWindow() {
+        decodeQueue.clear();
+        const offsets = [0, direction, direction * 2, direction * 3, -direction, -direction * 2];
+        const currentBitmap = decodedFrames.get(targetFrame);
+        if (currentBitmap && paintedFrame !== targetFrame) draw(currentBitmap, targetFrame);
+        if (!currentBitmap && decodedFrames.size > 0) {
+          const [nearestFrame, nearestBitmap] = [...decodedFrames.entries()]
+            .sort((a, b) => Math.abs(a[0] - targetFrame) - Math.abs(b[0] - targetFrame))[0];
+          if (paintedFrame !== nearestFrame) draw(nearestBitmap, nearestFrame);
+        }
+        for (const offset of offsets) {
+          const index = Math.max(0, Math.min(totalFrames - 1, targetFrame + offset));
+          if (!decodedFrames.has(index) && !decodingFrames.has(index)) decodeQueue.add(index);
+        }
+        pumpDecodeQueue();
+      }
+
+      async function preloadFrames() {
+        let nextIndex = 0;
+        const workerCount = 4;
+        const workers = Array.from({ length: workerCount }, async () => {
+          while (nextIndex < totalFrames) {
+            const index = nextIndex;
+            nextIndex += 1;
+            try {
+              await getFrameBlob(index);
+            } catch (error) {
+              console.error(`Unable to preload animation frame ${index + 1}.`, error);
+            }
+          }
+        });
+        await Promise.all(workers);
+      }
+
+      function update() {
+        scrollQueued = false;
+        const range = walk.offsetHeight - window.innerHeight;
+        const progress = range > 0 ? Math.max(0, Math.min(1, (window.scrollY - walk.offsetTop) / range)) : 0;
+        const nextFrame = reducedMotion ? 0 : Math.round(progress * (totalFrames - 1));
+        if (window.scrollY !== lastScrollY) direction = window.scrollY > lastScrollY ? 1 : -1;
+        lastScrollY = window.scrollY;
+        if (nextFrame !== targetFrame) {
+          targetFrame = nextFrame;
+          queueFrameWindow();
+        }
+      }
+
+      function queueUpdate() {
+        if (scrollQueued) return;
+        scrollQueued = true;
+        window.requestAnimationFrame(update);
+      }
+
+      function queueResize() {
+        if (resizeQueued) return;
+        resizeQueued = true;
+        window.requestAnimationFrame(() => {
+          resizeQueued = false;
+          resizeCanvas();
+          queueFrameWindow();
+          queueUpdate();
+        });
+      }
+
+      resizeCanvas();
+      queueFrameWindow();
+      window.addEventListener("scroll", queueUpdate, { passive: true });
+      window.addEventListener("resize", queueResize, { passive: true });
+      queueUpdate();
+    })();
+  </script>
+</body>
+</html>
