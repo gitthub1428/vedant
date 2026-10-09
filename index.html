@@ -43,7 +43,6 @@
       position: sticky;
       top: 0;
       height: 100svh;
-      min-height: 540px;
       overflow: hidden;
       isolation: isolate;
       background: #b9c6c2;
@@ -149,7 +148,6 @@
       const walk = document.querySelector("#walk");
       const canvas = document.querySelector("#landscape");
       const context = canvas.getContext("2d", { alpha: false });
-      const scene = document.querySelector(".scene");
       const frameBlobs = new Array(totalFrames);
       const blobPromises = new Map();
       const decodedFrames = new Map();
@@ -168,13 +166,6 @@
       let lastScrollY = window.scrollY;
       let scrollQueued = false;
       let resizeQueued = false;
-
-      if (document.fullscreenEnabled && document.documentElement.requestFullscreen) {
-        scene.addEventListener("click", () => {
-          if (document.fullscreenElement) return;
-          document.documentElement.requestFullscreen().catch(() => {});
-        });
-      }
 
       function frameUrl(index) {
         return `ezgif-614ba16d5362531c-jpg/ezgif-frame-${String(index + 1).padStart(3, "0")}.jpg`;
